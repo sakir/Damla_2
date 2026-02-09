@@ -21,6 +21,8 @@ from config import (
     MAX_DISTANCE_MM,
     OBJECT_WIDTH_MM,
     OBJECT_HEIGHT_MM,
+    CROP_ENABLED,
+    CROP_MARGIN,
 )
 
 
@@ -40,6 +42,12 @@ class CameraService:
         self._focus_mode = "Manual"
         self._focus_value = 9
         self._pan = (0, 0)
+        self._crop_enabled = CROP_ENABLED
+        self._crop_width_mm = OBJECT_WIDTH_MM
+        self._crop_height_mm = OBJECT_HEIGHT_MM
+        self._crop_distance_mm = MAX_DISTANCE_MM
+        self._crop_margin = CROP_MARGIN
+        self._hardware_crop_active = False
         self._gamma_lut = None
         self._gamma_lut_gamma = None
         self._running = False
@@ -49,13 +57,23 @@ class CameraService:
         self._fps_deque = deque(maxlen=30)
         self._last_fps_time = None
 
+    def _get_crop_ratios(self):
+        if not self._crop_enabled:
+            return 1.0, 1.0
+        distance = max(1.0, float(self._crop_distance_mm))
+        ratio_w = (float(self._crop_width_mm) / distance) * float(self._crop_margin)
+        ratio_h = (float(self._crop_height_mm) / distance) * float(self._crop_margin)
+        ratio_w = max(0.01, min(1.0, ratio_w))
+        ratio_h = max(0.01, min(1.0, ratio_h))
+        return ratio_w, ratio_h
+
     def _build_crop_region(self, w, h):
-        """Performans: sadece 300mm mesafe, 50x50mm nesne alanını göster (merkez crop)."""
-        # Basit: çerçevenin ortasından orantılı bir alan (gerçek kalibrasyonla güncellenir)
-        scale_w = OBJECT_WIDTH_MM / (2 * MAX_DISTANCE_MM) if MAX_DISTANCE_MM else 0.1
-        scale_h = OBJECT_HEIGHT_MM / (2 * MAX_DISTANCE_MM) if MAX_DISTANCE_MM else 0.1
-        cw = max(64, int(w * min(1.0, scale_w * 2)))
-        ch = max(64, int(h * min(1.0, scale_h * 2)))
+        """Performans: sadece hedeflenen nesne alanını göster (merkez crop)."""
+        ratio_w, ratio_h = self._get_crop_ratios()
+        cw = max(64, int(w * ratio_w))
+        ch = max(64, int(h * ratio_h))
+        cw = min(cw, w)
+        ch = min(ch, h)
         x0 = (w - cw) // 2
         y0 = (h - ch) // 2
         return (x0, y0, cw, ch)
@@ -136,6 +154,20 @@ class CameraService:
         if clahe_clip is not None:
             self._clahe_clip = clahe_clip
 
+    def set_crop_params(self, width_mm=None, height_mm=None, distance_mm=None):
+        updated = False
+        if width_mm is not None and width_mm > 0:
+            self._crop_width_mm = float(width_mm)
+            updated = True
+        if height_mm is not None and height_mm > 0:
+            self._crop_height_mm = float(height_mm)
+            updated = True
+        if distance_mm is not None and distance_mm > 0:
+            self._crop_distance_mm = float(distance_mm)
+            updated = True
+        if updated and self._picam2 and PICAMERA_AVAILABLE:
+            self._apply_hardware_crop()
+
     def set_zoom(self, zoom):
         self._zoom = max(1.0, min(15.0, float(zoom)))
 
@@ -212,6 +244,11 @@ class CameraService:
         if self._image_mode == "Gri":
             if len(frame.shape) == 3:
                 frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        if self._hardware_crop_active:
+            frame = self._apply_filter(frame)
+            if self._zoom > 1.0 or self._pan != (0, 0):
+                frame = self._apply_zoom_pan(frame, self._pan[0], self._pan[1], self._zoom)
+            return frame
         if self._zoom <= 1.0 and self._pan == (0, 0):
             x0, y0, cw, ch = self._build_crop_region(frame.shape[1], frame.shape[0])
             frame = frame[y0 : y0 + ch, x0 : x0 + cw]
@@ -226,6 +263,7 @@ class CameraService:
             return
         self._running = True
         self._fps_deque.clear()
+        self._hardware_crop_active = False
         if PICAMERA_AVAILABLE and Picamera2:
             try:
                 self._picam2 = Picamera2()
@@ -238,6 +276,7 @@ class CameraService:
                     self._picam2.set_controls({"FrameDurationLimits": (frame_us, frame_us)})
                 except Exception:
                     pass
+                self._apply_hardware_crop()
                 self._thread = threading.Thread(target=self._grab_loop_picamera2, daemon=True)
             except Exception:
                 self._picam2 = None
@@ -272,6 +311,33 @@ class CameraService:
     def _restart_picamera2(self):
         self.stop()
         self.start()
+
+    def _apply_hardware_crop(self):
+        if not (self._picam2 and PICAMERA_AVAILABLE):
+            self._hardware_crop_active = False
+            return
+        crop_max = self._picam2.camera_properties.get("ScalerCropMaximum")
+        if not crop_max:
+            self._hardware_crop_active = False
+            return
+        x, y, w, h = crop_max
+        ratio_w, ratio_h = self._get_crop_ratios()
+        cw = max(64, int(w * ratio_w))
+        ch = max(64, int(h * ratio_h))
+        cw = min(cw, w)
+        ch = min(ch, h)
+        x0 = x + (w - cw) // 2
+        y0 = y + (h - ch) // 2
+        # libcamera crop values should be even
+        x0 &= ~1
+        y0 &= ~1
+        cw &= ~1
+        ch &= ~1
+        try:
+            self._picam2.set_controls({"ScalerCrop": (x0, y0, cw, ch)})
+            self._hardware_crop_active = True
+        except Exception:
+            self._hardware_crop_active = False
 
     def trigger_autofocus(self):
         if self._focus_mode != "Otomatik":

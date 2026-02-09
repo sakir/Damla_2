@@ -70,6 +70,9 @@ POLYNOMIAL_FITTING_PARAMS = {
 MAX_DISTANCE_MM = 300
 OBJECT_WIDTH_MM = 50
 OBJECT_HEIGHT_MM = 50
+CROP_ENABLED = True
+# Görsel alanı biraz genişletmek için (1.0 = tam, 1.2 = %20 pay)
+CROP_MARGIN = 1.1
 
 # Veritabanı
 DB_PATH = "damla_2.db"

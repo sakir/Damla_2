@@ -84,6 +84,9 @@ class MainWindow(QMainWindow):
         self.lighting_tab.led_test_requested.connect(self._on_led_test)
         self.lighting_tab.set_led_test_ok(False)
 
+        # Kalibrasyon (gösterilecek alan)
+        self.calibration_tab.settings_changed.connect(self._apply_calibration_settings)
+
         # Analiz
         self.camera_widget.roi_changed.connect(self._on_roi_changed)
         self.analysis_tab.roi_clear_requested.connect(self.camera_widget.roi_clear)
@@ -141,6 +144,23 @@ class MainWindow(QMainWindow):
             s.get("location", "Yok"),
             s.get("leds_mask", 0),
         )
+
+    def _apply_calibration_settings(self, s):
+        self.camera_service.set_crop_params(
+            width_mm=s.get("width_mm"),
+            height_mm=s.get("height_mm"),
+            distance_mm=s.get("distance_mm"),
+        )
+        try:
+            self.log_tab.append(
+                "Kalibrasyon: %.1f x %.1f mm, %.1f mm" % (
+                    s.get("width_mm", 0),
+                    s.get("height_mm", 0),
+                    s.get("distance_mm", 0),
+                )
+            )
+        except Exception:
+            pass
 
     def _on_led_test(self):
         def confirm(color):

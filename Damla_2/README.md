@@ -84,6 +84,7 @@ python3 main.py
 
 - İsim, Genişlik (mm), Yükseklik (mm), Uzaklık (mm)
 - Kaydet, Yeni Kaydet (veritabanı)
+- Bu değerler kamera görüntüsünde gösterilecek alanı belirler (performans için merkez crop)
 
 ### Analiz sekmesi
 
