@@ -1,0 +1,8 @@
+# Damla_2 - Su damlasi olcum programi
+# Raspberry Pi 5, Rasperian, Arducam 64MP, WS2812
+
+PyQt5>=5.15.0
+numpy>=1.21.0
+opencv-python>=4.5.0
+picamera2>=0.3.0; sys_platform == 'linux'
+# rpi_ws281x; sys_platform == 'linux'  # Raspberry Pi'de: pip install rpi_ws281x
