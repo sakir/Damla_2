@@ -28,17 +28,31 @@ class CameraWidget(QLabel):
         self._scale = 1.0
         self._offset_x = 0
         self._offset_y = 0
+        self._display_origin_x = 0
+        self._display_origin_y = 0
 
     def set_frame(self, frame_bgr_or_gray):
         """OpenCV frame (BGR veya gri) göster."""
         if frame_bgr_or_gray is None:
             return
         self._current_frame = frame_bgr_or_gray
-        h, w = frame_bgr_or_gray.shape[:2]
-        if len(frame_bgr_or_gray.shape) == 2:
-            img = cv2.cvtColor(frame_bgr_or_gray, cv2.COLOR_GRAY2RGB)
+        frame = frame_bgr_or_gray
+        h, w = frame.shape[:2]
+        self._display_origin_x = 0
+        self._display_origin_y = 0
+        if self._roi_img and not self._roi_img.isEmpty():
+            x0 = max(0, min(self._roi_img.x(), w - 1))
+            y0 = max(0, min(self._roi_img.y(), h - 1))
+            rw = max(1, min(self._roi_img.width(), w - x0))
+            rh = max(1, min(self._roi_img.height(), h - y0))
+            frame = frame[y0 : y0 + rh, x0 : x0 + rw]
+            h, w = frame.shape[:2]
+            self._display_origin_x = x0
+            self._display_origin_y = y0
+        if len(frame.shape) == 2:
+            img = cv2.cvtColor(frame, cv2.COLOR_GRAY2RGB)
         else:
-            img = cv2.cvtColor(frame_bgr_or_gray, cv2.COLOR_BGR2RGB)
+            img = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         bytes_per_line = img.shape[2] * w
         qimg = QImage(img.data, w, h, bytes_per_line, QImage.Format_RGB888)
         self._pixmap = QPixmap.fromImage(qimg)
@@ -56,10 +70,14 @@ class CameraWidget(QLabel):
         if self._roi_img and not self._roi_img.isEmpty():
             pen = QPen(QColor(0, 255, 0), 2, Qt.SolidLine)
             painter.setPen(pen)
-            painter.drawRect(self._roi_img)
+            painter.drawRect(self._roi_img.translated(-self._display_origin_x, -self._display_origin_y))
         for (x, y, text) in self._overlay_text:
             painter.setPen(QColor(255, 255, 0))
-            painter.drawText(int(x), int(y), str(text))
+            painter.drawText(
+                int(x - self._display_origin_x),
+                int(y - self._display_origin_y),
+                str(text),
+            )
         painter.end()
         self.setPixmap(pm.scaled(self.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation))
 
@@ -128,10 +146,10 @@ class CameraWidget(QLabel):
             h = max(1, self._pixmap.height())
             x = min(max(x, 0), w - 1)
             y = min(max(y, 0), h - 1)
-            return int(x), int(y)
+            return int(x + self._display_origin_x), int(y + self._display_origin_y)
         if x < 0 or y < 0 or x >= self._pixmap.width() or y >= self._pixmap.height():
             return None
-        return int(x), int(y)
+        return int(x + self._display_origin_x), int(y + self._display_origin_y)
 
     def add_overlay_text(self, x, y, text):
         self._overlay_text.append((x, y, text))
