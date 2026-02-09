@@ -181,7 +181,7 @@ class CameraService:
         if mode is not None:
             self._focus_mode = mode
         if value is not None:
-            self._focus_value = int(value)
+            self._focus_value = float(value)
         if self._picam2 and PICAMERA_AVAILABLE:
             try:
                 if self._focus_mode == "Manual":

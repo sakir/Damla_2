@@ -22,7 +22,7 @@ ZOOM_MIN, ZOOM_MAX = 1, 15
 ZOOM_DEFAULT = 1
 
 # Focus default (manuel)
-FOCUS_DEFAULT = 9
+FOCUS_DEFAULT = 9.0
 
 # Pan default
 PAN_DEFAULT = (0, 0)

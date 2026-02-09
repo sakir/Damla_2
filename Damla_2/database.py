@@ -79,7 +79,7 @@ def camera_save(name, data):
             data.get("clahe_clip", 2.0),
             data.get("zoom", 1.0),
             data.get("focus_mode", "Manual"),
-            data.get("focus_value", 9),
+            data.get("focus_value", 9.0),
             data.get("pan_x", 0),
             data.get("pan_y", 0),
         ))
@@ -113,7 +113,7 @@ def camera_load(name):
             "clahe_clip": r["clahe_clip"] if r["clahe_clip"] is not None else 2.0,
             "zoom": r["zoom"] if r["zoom"] is not None else 1.0,
             "focus_mode": r["focus_mode"] or "Manual",
-            "focus_value": r["focus_value"] if r["focus_value"] is not None else 9,
+            "focus_value": float(r["focus_value"]) if r["focus_value"] is not None else 9.0,
             "pan_x": r["pan_x"] or 0,
             "pan_y": r["pan_y"] or 0,
         }

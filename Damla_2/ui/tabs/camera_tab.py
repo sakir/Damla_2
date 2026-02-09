@@ -95,10 +95,13 @@ class CameraTab(QWidget):
         zoom_group = QGroupBox("Zoom")
         zoom_layout = QHBoxLayout(zoom_group)
         self.zoom_slider = QSlider(Qt.Horizontal)
-        self.zoom_slider.setRange(ZOOM_MIN, ZOOM_MAX)
-        self.zoom_slider.setValue(ZOOM_DEFAULT)
-        self.zoom_slider.valueChanged.connect(lambda v: self._emit_settings() or self.zoom_value_label.setText(f"{v}x"))
-        self.zoom_value_label = QLabel(f"{ZOOM_DEFAULT}x")
+        self._zoom_scale = 10
+        self.zoom_slider.setRange(int(ZOOM_MIN * self._zoom_scale), int(ZOOM_MAX * self._zoom_scale))
+        self.zoom_slider.setValue(int(ZOOM_DEFAULT * self._zoom_scale))
+        self.zoom_slider.valueChanged.connect(
+            lambda v: self._emit_settings() or self.zoom_value_label.setText(f"{v / self._zoom_scale:.1f}x")
+        )
+        self.zoom_value_label = QLabel(f"{ZOOM_DEFAULT:.1f}x")
         zoom_layout.addWidget(self.zoom_slider)
         zoom_layout.addWidget(self.zoom_value_label)
         layout.addWidget(zoom_group)
@@ -113,20 +116,27 @@ class CameraTab(QWidget):
         focus_layout.addWidget(self.focus_mode_combo, 0, 1)
         self.focus_manual_widget = QWidget()
         fm_layout = QHBoxLayout(self.focus_manual_widget)
-        self.focus_value_label = QLabel(f"Netlik: {FOCUS_DEFAULT}")
+        self.focus_value_label = QLabel("Netlik:")
+        self.focus_value_spin = QDoubleSpinBox()
+        self.focus_value_spin.setRange(0.0, 255.0)
+        self.focus_value_spin.setDecimals(1)
+        self.focus_value_spin.setSingleStep(0.1)
+        self.focus_value_spin.setValue(float(FOCUS_DEFAULT))
+        self.focus_value_spin.valueChanged.connect(self._on_focus_value_changed)
         self.btn_f_minus = QPushButton("F-")
         self.btn_f_plus = QPushButton("F+")
         self.btn_f_minus.clicked.connect(self._focus_minus)
         self.btn_f_plus.clicked.connect(self._focus_plus)
         fm_layout.addWidget(self.btn_f_minus)
         fm_layout.addWidget(self.focus_value_label)
+        fm_layout.addWidget(self.focus_value_spin)
         fm_layout.addWidget(self.btn_f_plus)
         focus_layout.addWidget(self.focus_manual_widget, 1, 0, 1, 2)
         self.btn_autofocus = QPushButton("Autofocus tekrarla")
         self.btn_autofocus.clicked.connect(self._on_autofocus)
         self.btn_autofocus.setVisible(False)
         focus_layout.addWidget(self.btn_autofocus, 2, 0, 1, 2)
-        self._focus_value = FOCUS_DEFAULT
+        self._focus_value = float(FOCUS_DEFAULT)
         layout.addWidget(focus_group)
 
         # Pan
@@ -197,7 +207,7 @@ class CameraTab(QWidget):
             "light_filter": self.filter_combo.currentText(),
             "gamma": self.gamma_slider.value() / 100.0,
             "clahe_clip": self.clahe_slider.value() / 10.0,
-            "zoom": self.zoom_slider.value(),
+            "zoom": self.zoom_slider.value() / self._zoom_scale,
             "focus_mode": self.focus_mode_combo.currentText(),
             "focus_value": self._focus_value,
             "pan_x": self._pan_x,
@@ -215,10 +225,10 @@ class CameraTab(QWidget):
         self.filter_combo.setCurrentText(s.get("light_filter", DEFAULT_LIGHT_FILTER))
         self.gamma_slider.setValue(int((s.get("gamma", 1.0) or 1.0) * 100))
         self.clahe_slider.setValue(int((s.get("clahe_clip", 2.0) or 2.0) * 10))
-        self.zoom_slider.setValue(int(s.get("zoom", ZOOM_DEFAULT)))
+        self.zoom_slider.setValue(int(float(s.get("zoom", ZOOM_DEFAULT)) * self._zoom_scale))
         self.focus_mode_combo.setCurrentText(s.get("focus_mode", "Manual"))
-        self._focus_value = s.get("focus_value", FOCUS_DEFAULT)
-        self.focus_value_label.setText(f"Netlik: {self._focus_value}")
+        self._focus_value = float(s.get("focus_value", FOCUS_DEFAULT))
+        self.focus_value_spin.setValue(self._focus_value)
         self._pan_x = s.get("pan_x", 0)
         self._pan_y = s.get("pan_y", 0)
         self.pan_x_label.setText(f"X: {self._pan_x}")
@@ -244,13 +254,13 @@ class CameraTab(QWidget):
         self._emit_settings()
 
     def _focus_minus(self):
-        self._focus_value = max(0, self._focus_value - 1)
-        self.focus_value_label.setText(f"Netlik: {self._focus_value}")
-        self._emit_settings()
+        self.focus_value_spin.setValue(self.focus_value_spin.value() - self.focus_value_spin.singleStep())
 
     def _focus_plus(self):
-        self._focus_value = min(255, self._focus_value + 1)
-        self.focus_value_label.setText(f"Netlik: {self._focus_value}")
+        self.focus_value_spin.setValue(self.focus_value_spin.value() + self.focus_value_spin.singleStep())
+
+    def _on_focus_value_changed(self, value):
+        self._focus_value = float(value)
         self._emit_settings()
 
     def autofocus_clicked(self):

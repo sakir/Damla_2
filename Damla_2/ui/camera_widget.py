@@ -20,9 +20,9 @@ class CameraWidget(QLabel):
         self.setAlignment(Qt.AlignCenter)
         self.setStyleSheet("background-color: #1a1a1a;")
         self._pixmap = None
-        self._roi = None  # QRect
+        self._roi_img = None  # QRect (image coords)
         self._drawing = False
-        self._start_point = None
+        self._start_point_img = None
         self._overlay_text = []  # [(x,y, text), ...]
         self._current_frame = None
         self._scale = 1.0
@@ -53,10 +53,10 @@ class CameraWidget(QLabel):
             return
         pm = self._pixmap.copy()
         painter = QPainter(pm)
-        if self._roi and not self._roi.isEmpty():
+        if self._roi_img and not self._roi_img.isEmpty():
             pen = QPen(QColor(0, 255, 0), 2, Qt.SolidLine)
             painter.setPen(pen)
-            painter.drawRect(self._roi)
+            painter.drawRect(self._roi_img)
         for (x, y, text) in self._overlay_text:
             painter.setPen(QColor(255, 255, 0))
             painter.drawText(int(x), int(y), str(text))
@@ -69,48 +69,69 @@ class CameraWidget(QLabel):
 
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
+            start = self._widget_to_image(event.pos(), clamp=False)
+            if start is None:
+                return
             self._drawing = True
-            self._start_point = event.pos()
-            self._roi = QRect(event.pos(), event.pos())
+            self._start_point_img = start
+            x, y = start
+            self._roi_img = QRect(x, y, 1, 1)
 
     def mouseMoveEvent(self, event):
-        if self._drawing and self._start_point:
-            self._roi = QRect(self._start_point, event.pos()).normalized()
+        if self._drawing and self._start_point_img:
+            cur = self._widget_to_image(event.pos(), clamp=True)
+            if cur is None:
+                return
+            x0, y0 = self._start_point_img
+            x1, y1 = cur
+            self._roi_img = QRect(x0, y0, x1 - x0, y1 - y0).normalized()
             self.update()
 
     def mouseReleaseEvent(self, event):
         if event.button() == Qt.LeftButton and self._drawing:
             self._drawing = False
-            if self._pixmap and self._scale > 0:
-                x0 = int((self._roi.x() - self._offset_x) / self._scale)
-                y0 = int((self._roi.y() - self._offset_y) / self._scale)
-                w = int(self._roi.width() / self._scale)
-                h = int(self._roi.height() / self._scale)
-                if w > 5 and h > 5:
-                    self._roi_img = QRect(x0, y0, w, h)
-                else:
-                    self._roi_img = None
-            else:
+            if self._start_point_img:
+                cur = self._widget_to_image(event.pos(), clamp=True)
+                if cur is not None:
+                    x0, y0 = self._start_point_img
+                    x1, y1 = cur
+                    self._roi_img = QRect(x0, y0, x1 - x0, y1 - y0).normalized()
+            self._start_point_img = None
+            if self._roi_img and (self._roi_img.width() <= 5 or self._roi_img.height() <= 5):
                 self._roi_img = None
-            self.roi_changed.emit(self._roi)
+            self.roi_changed.emit(self._roi_img)
             self.update()
 
     def roi_clear(self):
         """Roi ve tüm overlay verilerini temizle."""
-        self._roi = None
-        self._roi_img = getattr(self, "_roi_img", None)
         self._roi_img = None
+        self._start_point_img = None
         self._overlay_text.clear()
         self.update()
         self.roi_changed.emit(None)
 
     def get_roi_rect(self):
-        """Widget içinde ROI dikdörtgeni."""
-        return self._roi
+        """Görüntü koordinatında ROI dikdörtgeni."""
+        return self._roi_img
 
     def get_roi_in_image_coords(self):
         """Görüntü koordinatında ROI (x,y,w,h) veya None."""
         return getattr(self, "_roi_img", None)
+
+    def _widget_to_image(self, pos, clamp=False):
+        if self._pixmap is None or self._scale <= 0:
+            return None
+        x = (pos.x() - self._offset_x) / self._scale
+        y = (pos.y() - self._offset_y) / self._scale
+        if clamp:
+            w = max(1, self._pixmap.width())
+            h = max(1, self._pixmap.height())
+            x = min(max(x, 0), w - 1)
+            y = min(max(y, 0), h - 1)
+            return int(x), int(y)
+        if x < 0 or y < 0 or x >= self._pixmap.width() or y >= self._pixmap.height():
+            return None
+        return int(x), int(y)
 
     def add_overlay_text(self, x, y, text):
         self._overlay_text.append((x, y, text))
