@@ -30,6 +30,7 @@ class CameraWidget(QLabel):
         self._offset_y = 0
         self._display_origin_x = 0
         self._display_origin_y = 0
+        self._display_roi_only = False
 
     def set_frame(self, frame_bgr_or_gray):
         """OpenCV frame (BGR veya gri) göster."""
@@ -40,7 +41,7 @@ class CameraWidget(QLabel):
         h, w = frame.shape[:2]
         self._display_origin_x = 0
         self._display_origin_y = 0
-        if self._roi_img and not self._roi_img.isEmpty():
+        if self._display_roi_only and self._roi_img and not self._roi_img.isEmpty():
             x0 = max(0, min(self._roi_img.x(), w - 1))
             y0 = max(0, min(self._roi_img.y(), h - 1))
             rw = max(1, min(self._roi_img.width(), w - x0))
@@ -90,6 +91,7 @@ class CameraWidget(QLabel):
             start = self._widget_to_image(event.pos(), clamp=False)
             if start is None:
                 return
+            self._display_roi_only = False
             self._drawing = True
             self._start_point_img = start
             x, y = start
@@ -117,6 +119,7 @@ class CameraWidget(QLabel):
             self._start_point_img = None
             if self._roi_img and (self._roi_img.width() <= 5 or self._roi_img.height() <= 5):
                 self._roi_img = None
+            self._display_roi_only = bool(self._roi_img and not self._roi_img.isEmpty())
             self.roi_changed.emit(self._roi_img)
             self.update()
 
@@ -124,6 +127,7 @@ class CameraWidget(QLabel):
         """Roi ve tüm overlay verilerini temizle."""
         self._roi_img = None
         self._start_point_img = None
+        self._display_roi_only = False
         self._overlay_text.clear()
         self.update()
         self.roi_changed.emit(None)
