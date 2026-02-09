@@ -1,13 +1,14 @@
 # -*- coding: utf-8 -*-
 """Damla_2 - Yapılandırma ve sabitler."""
 
-# Kamera çözünürlükleri (Arducam 64MP)
+# Kamera çözünürlükleri (Arducam 64MP - sensör modları)
 RESOLUTIONS = [
-    (1152, 868),
+    (1280, 720),
+    (2312, 1736),
     (4624, 3472),
     (9152, 6944),
 ]
-DEFAULT_RESOLUTION = (4624, 3472)
+DEFAULT_RESOLUTION = (2312, 1736)
 
 # Görüntü modları
 IMAGE_MODES = ["Renkli", "Gri"]

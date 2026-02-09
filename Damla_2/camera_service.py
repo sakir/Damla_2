@@ -40,6 +40,8 @@ class CameraService:
         self._focus_mode = "Manual"
         self._focus_value = 9
         self._pan = (0, 0)
+        self._gamma_lut = None
+        self._gamma_lut_gamma = None
         self._running = False
         self._thread = None
         self._picam2 = None
@@ -63,8 +65,15 @@ class CameraService:
             return frame
         is_color = len(frame.shape) == 3
         if self._light_filter == "Gamma":
-            inv_g = 1.0 / max(0.1, self._gamma)
-            frame = np.clip(np.power(frame / 255.0, inv_g) * 255.0, 0, 255).astype(np.uint8)
+            gamma = max(0.1, float(self._gamma))
+            if self._gamma_lut is None or self._gamma_lut_gamma != gamma:
+                inv_g = 1.0 / gamma
+                self._gamma_lut = np.array(
+                    [int(min(255, (i / 255.0) ** inv_g * 255.0)) for i in range(256)],
+                    dtype=np.uint8,
+                )
+                self._gamma_lut_gamma = gamma
+            frame = cv2.LUT(frame, self._gamma_lut)
         elif self._light_filter == "CLAHE":
             if is_color:
                 lab = cv2.cvtColor(frame, cv2.COLOR_BGR2LAB)
@@ -90,10 +99,30 @@ class CameraService:
         return cv2.resize(cropped, (w, h), interpolation=cv2.INTER_LINEAR)
 
     def set_resolution(self, resolution):
-        self._resolution = tuple(resolution)
+        resolution = tuple(resolution)
+        if resolution == self._resolution:
+            return
+        self._resolution = resolution
+        if self._running:
+            if self._picam2 and PICAMERA_AVAILABLE:
+                self._restart_picamera2()
+            elif self._cap and self._cap.isOpened():
+                self._cap.set(cv2.CAP_PROP_FRAME_WIDTH, min(1920, self._resolution[0]))
+                self._cap.set(cv2.CAP_PROP_FRAME_HEIGHT, min(1080, self._resolution[1]))
 
     def set_fps(self, fps):
         self._fps = max(1, min(30, int(fps)))
+        if self._picam2 and PICAMERA_AVAILABLE:
+            frame_us = int(1_000_000 / self._fps)
+            try:
+                self._picam2.set_controls({"FrameDurationLimits": (frame_us, frame_us)})
+            except Exception:
+                pass
+        elif self._cap and self._cap.isOpened():
+            try:
+                self._cap.set(cv2.CAP_PROP_FPS, float(self._fps))
+            except Exception:
+                pass
 
     def set_image_mode(self, mode):
         self._image_mode = mode
@@ -102,6 +131,8 @@ class CameraService:
         self._light_filter = name
         if gamma is not None:
             self._gamma = gamma
+            self._gamma_lut = None
+            self._gamma_lut_gamma = None
         if clahe_clip is not None:
             self._clahe_clip = clahe_clip
 
@@ -181,13 +212,14 @@ class CameraService:
         if self._image_mode == "Gri":
             if len(frame.shape) == 3:
                 frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        if self._zoom <= 1.0 and self._pan == (0, 0):
+            x0, y0, cw, ch = self._build_crop_region(frame.shape[1], frame.shape[0])
+            frame = frame[y0 : y0 + ch, x0 : x0 + cw]
+            return self._apply_filter(frame)
         frame = self._apply_filter(frame)
-        frame = self._apply_zoom_pan(
-            frame, self._pan[0], self._pan[1], self._zoom
-        )
+        frame = self._apply_zoom_pan(frame, self._pan[0], self._pan[1], self._zoom)
         x0, y0, cw, ch = self._build_crop_region(frame.shape[1], frame.shape[0])
-        frame = frame[y0 : y0 + ch, x0 : x0 + cw]
-        return frame
+        return frame[y0 : y0 + ch, x0 : x0 + cw]
 
     def start(self):
         if self._running:
@@ -201,6 +233,11 @@ class CameraService:
                     main={"size": self._resolution, "format": "RGB888"}
                 )
                 self._picam2.configure(config)
+                frame_us = int(1_000_000 / self._fps)
+                try:
+                    self._picam2.set_controls({"FrameDurationLimits": (frame_us, frame_us)})
+                except Exception:
+                    pass
                 self._thread = threading.Thread(target=self._grab_loop_picamera2, daemon=True)
             except Exception:
                 self._picam2 = None
@@ -231,6 +268,10 @@ class CameraService:
         if self._cap:
             self._cap.release()
             self._cap = None
+
+    def _restart_picamera2(self):
+        self.stop()
+        self.start()
 
     def trigger_autofocus(self):
         if self._focus_mode != "Otomatik":

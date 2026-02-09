@@ -63,7 +63,7 @@ python3 main.py
 
 ### Kamera sekmesi
 
-- Çözünürlük: (1152×868), (4624×3472), (9152×6944) – varsayılan 9152×6944
+- Çözünürlük: (1280×720), (2312×1736), (4624×3472), (9152×6944) – varsayılan 2312×1736
 - FPS slider ve gerçek FPS
 - Görüntü modu: Renkli / Gri
 - Aydınlatma filtresi: Yok, CLAHE, Gamma (Gamma/CLAHE slider’ları)
