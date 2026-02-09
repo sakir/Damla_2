@@ -1,0 +1,242 @@
+# -*- coding: utf-8 -*-
+"""Kamera servisi: Picamera2 (RPi) veya OpenCV fallback."""
+
+import threading
+import time
+from collections import deque
+
+try:
+    from picamera2 import Picamera2
+    PICAMERA_AVAILABLE = True
+except ImportError:
+    PICAMERA_AVAILABLE = False
+    Picamera2 = None
+
+import cv2
+import numpy as np
+
+from config import (
+    RESOLUTIONS,
+    DEFAULT_RESOLUTION,
+    MAX_DISTANCE_MM,
+    OBJECT_WIDTH_MM,
+    OBJECT_HEIGHT_MM,
+)
+
+
+class CameraService:
+    """Arducam 64MP / Picamera2 veya test için OpenCV kamera."""
+
+    def __init__(self, on_frame=None, on_fps=None):
+        self.on_frame = on_frame
+        self.on_fps = on_fps
+        self._resolution = DEFAULT_RESOLUTION
+        self._fps = 10
+        self._image_mode = "Renkli"
+        self._light_filter = "Gamma"
+        self._gamma = 1.0
+        self._clahe_clip = 2.0
+        self._zoom = 1.0
+        self._focus_mode = "Manual"
+        self._focus_value = 9
+        self._pan = (0, 0)
+        self._running = False
+        self._thread = None
+        self._picam2 = None
+        self._cap = None
+        self._fps_deque = deque(maxlen=30)
+        self._last_fps_time = None
+
+    def _build_crop_region(self, w, h):
+        """Performans: sadece 300mm mesafe, 50x50mm nesne alanını göster (merkez crop)."""
+        # Basit: çerçevenin ortasından orantılı bir alan (gerçek kalibrasyonla güncellenir)
+        scale_w = OBJECT_WIDTH_MM / (2 * MAX_DISTANCE_MM) if MAX_DISTANCE_MM else 0.1
+        scale_h = OBJECT_HEIGHT_MM / (2 * MAX_DISTANCE_MM) if MAX_DISTANCE_MM else 0.1
+        cw = max(64, int(w * min(1.0, scale_w * 2)))
+        ch = max(64, int(h * min(1.0, scale_h * 2)))
+        x0 = (w - cw) // 2
+        y0 = (h - ch) // 2
+        return (x0, y0, cw, ch)
+
+    def _apply_filter(self, frame):
+        if self._light_filter == "Yok":
+            return frame
+        is_color = len(frame.shape) == 3
+        if self._light_filter == "Gamma":
+            inv_g = 1.0 / max(0.1, self._gamma)
+            frame = np.clip(np.power(frame / 255.0, inv_g) * 255.0, 0, 255).astype(np.uint8)
+        elif self._light_filter == "CLAHE":
+            if is_color:
+                lab = cv2.cvtColor(frame, cv2.COLOR_BGR2LAB)
+                clahe = cv2.createCLAHE(clipLimit=float(self._clahe_clip), tileGridSize=(8, 8))
+                lab[..., 0] = clahe.apply(lab[..., 0])
+                frame = cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
+            else:
+                clahe = cv2.createCLAHE(clipLimit=float(self._clahe_clip), tileGridSize=(8, 8))
+                frame = clahe.apply(frame)
+        return frame
+
+    def _apply_zoom_pan(self, frame, pan_x, pan_y, zoom):
+        h, w = frame.shape[:2]
+        if zoom <= 1.0 and pan_x == 0 and pan_y == 0:
+            return frame
+        scale = min(float(zoom), min(w, h) / 64)
+        nw, nh = int(w / scale), int(h / scale)
+        x0 = (w - nw) // 2 - pan_x
+        y0 = (h - nh) // 2 - pan_y
+        x0 = max(0, min(x0, w - nw))
+        y0 = max(0, min(y0, h - nh))
+        cropped = frame[y0 : y0 + nh, x0 : x0 + nw]
+        return cv2.resize(cropped, (w, h), interpolation=cv2.INTER_LINEAR)
+
+    def set_resolution(self, resolution):
+        self._resolution = tuple(resolution)
+
+    def set_fps(self, fps):
+        self._fps = max(1, min(30, int(fps)))
+
+    def set_image_mode(self, mode):
+        self._image_mode = mode
+
+    def set_light_filter(self, name, gamma=None, clahe_clip=None):
+        self._light_filter = name
+        if gamma is not None:
+            self._gamma = gamma
+        if clahe_clip is not None:
+            self._clahe_clip = clahe_clip
+
+    def set_zoom(self, zoom):
+        self._zoom = max(1.0, min(15.0, float(zoom)))
+
+    def set_focus(self, mode=None, value=None):
+        if mode is not None:
+            self._focus_mode = mode
+        if value is not None:
+            self._focus_value = int(value)
+        if self._picam2 and PICAMERA_AVAILABLE:
+            try:
+                if self._focus_mode == "Manual":
+                    self._picam2.set_controls({"LensPosition": self._focus_value})
+                elif self._focus_mode == "Otomatik":
+                    self._picam2.set_controls({"AfMode": 1, "AfTrigger": 0})
+            except Exception:
+                pass
+
+    def set_pan(self, x=None, y=None, center=False):
+        if center:
+            self._pan = (0, 0)
+        else:
+            px, py = self._pan
+            if x is not None:
+                px = x
+            if y is not None:
+                py = y
+            self._pan = (px, py)
+
+    def get_pan(self):
+        return self._pan
+
+    def _grab_loop_picamera2(self):
+        try:
+            self._picam2.start()
+        except Exception:
+            if self.on_fps:
+                self.on_fps(0)
+            return
+        while self._running and self._picam2:
+            try:
+                arr = self._picam2.capture_array()
+                if arr is None:
+                    continue
+                frame = self._process_frame(arr)
+                if frame is not None and self.on_frame:
+                    self.on_frame(frame)
+                t = time.perf_counter()
+                self._fps_deque.append(t)
+                if len(self._fps_deque) >= 2 and self.on_fps:
+                    self.on_fps(len(self._fps_deque) / (self._fps_deque[-1] - self._fps_deque[0]))
+            except Exception:
+                break
+        try:
+            self._picam2.stop()
+        except Exception:
+            pass
+
+    def _grab_loop_opencv(self):
+        while self._running and self._cap and self._cap.isOpened():
+            ret, frame = self._cap.read()
+            if not ret or frame is None:
+                continue
+            frame = self._process_frame(frame)
+            if frame is not None and self.on_frame:
+                self.on_frame(frame)
+            t = time.perf_counter()
+            self._fps_deque.append(t)
+            if len(self._fps_deque) >= 2 and self.on_fps:
+                self.on_fps(len(self._fps_deque) / (self._fps_deque[-1] - self._fps_deque[0]))
+
+    def _process_frame(self, frame):
+        if frame is None:
+            return None
+        if self._image_mode == "Gri":
+            if len(frame.shape) == 3:
+                frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        frame = self._apply_filter(frame)
+        frame = self._apply_zoom_pan(
+            frame, self._pan[0], self._pan[1], self._zoom
+        )
+        x0, y0, cw, ch = self._build_crop_region(frame.shape[1], frame.shape[0])
+        frame = frame[y0 : y0 + ch, x0 : x0 + cw]
+        return frame
+
+    def start(self):
+        if self._running:
+            return
+        self._running = True
+        self._fps_deque.clear()
+        if PICAMERA_AVAILABLE and Picamera2:
+            try:
+                self._picam2 = Picamera2()
+                config = self._picam2.create_preview_configuration(
+                    main={"size": self._resolution, "format": "RGB888"}
+                )
+                self._picam2.configure(config)
+                self._thread = threading.Thread(target=self._grab_loop_picamera2, daemon=True)
+            except Exception:
+                self._picam2 = None
+                self._cap = cv2.VideoCapture(0)
+                if self._cap.isOpened():
+                    self._cap.set(cv2.CAP_PROP_FRAME_WIDTH, min(1920, self._resolution[0]))
+                    self._cap.set(cv2.CAP_PROP_FRAME_HEIGHT, min(1080, self._resolution[1]))
+                self._thread = threading.Thread(target=self._grab_loop_opencv, daemon=True)
+        else:
+            self._cap = cv2.VideoCapture(0)
+            if self._cap.isOpened():
+                self._cap.set(cv2.CAP_PROP_FRAME_WIDTH, min(1920, self._resolution[0]))
+                self._cap.set(cv2.CAP_PROP_FRAME_HEIGHT, min(1080, self._resolution[1]))
+            self._thread = threading.Thread(target=self._grab_loop_opencv, daemon=True)
+        self._thread.start()
+
+    def stop(self):
+        self._running = False
+        if self._thread:
+            self._thread.join(timeout=2.0)
+            self._thread = None
+        if self._picam2:
+            try:
+                self._picam2.close()
+            except Exception:
+                pass
+            self._picam2 = None
+        if self._cap:
+            self._cap.release()
+            self._cap = None
+
+    def trigger_autofocus(self):
+        if self._focus_mode != "Otomatik":
+            return
+        if self._picam2 and PICAMERA_AVAILABLE:
+            try:
+                self._picam2.set_controls({"AfMode": 1, "AfTrigger": 0})
+            except Exception:
+                pass
