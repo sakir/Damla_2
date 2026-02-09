@@ -89,7 +89,6 @@ class CameraTab(QWidget):
         filter_layout.addWidget(self.clahe_label)
         filter_layout.addWidget(self.clahe_slider)
         filter_layout.addWidget(self.clahe_value_label)
-        self._on_filter_changed()
         layout.addWidget(filter_group)
 
         # Zoom
@@ -182,6 +181,7 @@ class CameraTab(QWidget):
 
         layout.addStretch()
         self._refresh_preset_list()
+        self._on_filter_changed()
 
     def _emit_settings(self):
         self.settings_changed.emit(self.get_settings())
