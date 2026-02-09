@@ -104,3 +104,12 @@ SQLite: `damla_2.db` (kamera/aydınlatma/kalibrasyon preset’leri ve başlangı
 ## Geliştirme / Test (kamera yok)
 
 Kamera yoksa veya Pi dışında çalıştırıyorsanız, `camera_service` OpenCV ile varsayılan web kamerasına düşer; LED servisi donanım yoksa sessizce atlanır.
+
+### Görüntü yönü (ters/ayna)
+
+Görüntü ters veya aynalı görünüyorsa `config.py` içinde şu değerleri ayarlayın:
+
+```python
+FLIP_HORIZONTAL = True
+FLIP_VERTICAL = True
+```

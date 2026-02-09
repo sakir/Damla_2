@@ -74,5 +74,9 @@ CROP_ENABLED = True
 # Görsel alanı biraz genişletmek için (1.0 = tam, 1.2 = %20 pay)
 CROP_MARGIN = 1.1
 
+# Görüntü yönü (gerekirse True yapın)
+FLIP_HORIZONTAL = False
+FLIP_VERTICAL = False
+
 # Veritabanı
 DB_PATH = "damla_2.db"

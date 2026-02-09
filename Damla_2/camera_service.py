@@ -23,6 +23,8 @@ from config import (
     OBJECT_HEIGHT_MM,
     CROP_ENABLED,
     CROP_MARGIN,
+    FLIP_HORIZONTAL,
+    FLIP_VERTICAL,
 )
 
 
@@ -48,6 +50,8 @@ class CameraService:
         self._crop_distance_mm = MAX_DISTANCE_MM
         self._crop_margin = CROP_MARGIN
         self._hardware_crop_active = False
+        self._flip_h = FLIP_HORIZONTAL
+        self._flip_v = FLIP_VERTICAL
         self._gamma_lut = None
         self._gamma_lut_gamma = None
         self._running = False
@@ -170,6 +174,8 @@ class CameraService:
 
     def set_zoom(self, zoom):
         self._zoom = max(1.0, min(15.0, float(zoom)))
+        if self._picam2 and PICAMERA_AVAILABLE:
+            self._apply_hardware_crop()
 
     def set_focus(self, mode=None, value=None):
         if mode is not None:
@@ -195,6 +201,8 @@ class CameraService:
             if y is not None:
                 py = y
             self._pan = (px, py)
+        if self._picam2 and PICAMERA_AVAILABLE:
+            self._apply_hardware_crop()
 
     def get_pan(self):
         return self._pan
@@ -241,14 +249,18 @@ class CameraService:
     def _process_frame(self, frame):
         if frame is None:
             return None
+        if self._flip_h or self._flip_v:
+            if self._flip_h and self._flip_v:
+                frame = cv2.flip(frame, -1)
+            elif self._flip_h:
+                frame = cv2.flip(frame, 1)
+            else:
+                frame = cv2.flip(frame, 0)
         if self._image_mode == "Gri":
             if len(frame.shape) == 3:
                 frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         if self._hardware_crop_active:
-            frame = self._apply_filter(frame)
-            if self._zoom > 1.0 or self._pan != (0, 0):
-                frame = self._apply_zoom_pan(frame, self._pan[0], self._pan[1], self._zoom)
-            return frame
+            return self._apply_filter(frame)
         if self._zoom <= 1.0 and self._pan == (0, 0):
             x0, y0, cw, ch = self._build_crop_region(frame.shape[1], frame.shape[0])
             frame = frame[y0 : y0 + ch, x0 : x0 + cw]
@@ -322,12 +334,25 @@ class CameraService:
             return
         x, y, w, h = crop_max
         ratio_w, ratio_h = self._get_crop_ratios()
-        cw = max(64, int(w * ratio_w))
-        ch = max(64, int(h * ratio_h))
+        base_w = max(64, int(w * ratio_w))
+        base_h = max(64, int(h * ratio_h))
+        base_w = min(base_w, w)
+        base_h = min(base_h, h)
+        zoom = max(1.0, float(self._zoom))
+        cw = max(64, int(base_w / zoom))
+        ch = max(64, int(base_h / zoom))
         cw = min(cw, w)
         ch = min(ch, h)
-        x0 = x + (w - cw) // 2
-        y0 = y + (h - ch) // 2
+        base_x = x + (w - base_w) // 2
+        base_y = y + (h - base_h) // 2
+        out_w = max(1, int(self._resolution[0]))
+        out_h = max(1, int(self._resolution[1]))
+        pan_x = int(self._pan[0] * (base_w / out_w))
+        pan_y = int(self._pan[1] * (base_h / out_h))
+        x0 = base_x + (base_w - cw) // 2 - pan_x
+        y0 = base_y + (base_h - ch) // 2 - pan_y
+        x0 = max(x, min(x0, x + w - cw))
+        y0 = max(y, min(y0, y + h - ch))
         # libcamera crop values should be even
         x0 &= ~1
         y0 &= ~1
