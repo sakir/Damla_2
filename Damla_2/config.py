@@ -7,7 +7,7 @@ RESOLUTIONS = [
     (4624, 3472),
     (9152, 6944),
 ]
-DEFAULT_RESOLUTION = (9152, 6944)
+DEFAULT_RESOLUTION = (4624, 3472)
 
 # Görüntü modları
 IMAGE_MODES = ["Renkli", "Gri"]
